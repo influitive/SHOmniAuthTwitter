@@ -146,9 +146,8 @@
   ACAccountStore * accountStore  =  [[ACAccountStore alloc] init];
   ACAccountType  * accountType   = [accountStore accountTypeWithAccountTypeIdentifier:self.accountTypeIdentifier];
   theAccount.accountType = accountType; // Apple SDK bug - accountType isn't retained.
+
   [TWAPIManager performReverseAuthForAccount:theAccount withHandler:^(NSData *responseData, NSError *error) {
-
-
     if(responseData == nil) {
       dispatch_async(dispatch_get_main_queue(), ^{
         completionBlock((id<account>)theAccount, nil, error, NO);
@@ -159,59 +158,49 @@
     NSString *responseStr = [[NSString alloc] initWithData:responseData encoding:NSUTF8StringEncoding];
 
     NSDictionary * response = [NSURL ab_parseURLQueryString:responseStr];
-    BOOL isSuccess = error == nil ? YES : NO;
-
     SLRequest * request = [SLRequest requestForServiceType:SLServiceTypeTwitter requestMethod:SLRequestMethodGET URL:[NSURL URLWithString:@"https://api.twitter.com/1.1/account/verify_credentials.json?include_entities=false&skip_status=true"] parameters:nil];
     request.account = theAccount;
 
     [request performRequestWithHandler:^(NSData *responseData, NSHTTPURLResponse *urlResponse, NSError *error) {
-
-
-      if(responseData == nil) {
+      if(responseData == nil || error) {
         dispatch_async(dispatch_get_main_queue(), ^{
           completionBlock((id<account>)theAccount, nil, error, NO);
         });
-        
+
         return;
       }
 
       NSDictionary * responseUser =  [NSJSONSerialization
                                       JSONObjectWithData:responseData options:NSJSONReadingAllowFragments error:nil];
 
-      NSMutableDictionary * fullResponse = responseUser.mutableCopy;
-      fullResponse[@"oauth_token_secret"] = response[@"oauth_token_secret"];
-      fullResponse[@"oauth_token"]        = response[@"oauth_token"];
-
       dispatch_async(dispatch_get_main_queue(), ^{
         if (responseUser == nil) {
           NSString * message = @"Bad response: Unknown error"; // Default message
 
-          if (responseData) message = [[NSString alloc] initWithData: responseData encoding:NSUTF8StringEncoding];
-
+          if (responseData) { message = [[NSString alloc] initWithData: responseData encoding:NSUTF8StringEncoding]; }
 
           NSError *responseError = [NSError errorWithDomain:kOmniAuthTwitterErrorDomain
                                                        code:urlResponse.statusCode
                                                    userInfo:@{NSLocalizedDescriptionKey : NSNullIfNil(message)}];
 
-          completionBlock((id<account>)theAccount, nil, responseError, isSuccess);
-        }
-        // Twitter response may contain errors and should not be propagated to completionBlock or authHashWithResponse
-        else if ([responseUser[@"errors"] count] > 0) {
+          completionBlock((id<account>)theAccount, nil, responseError, NO);
+        } else if ([responseUser[@"errors"] count] > 0) { // Twitter response may contain errors and should not be propagated to completionBlock or authHashWithResponse
           NSError *responseError = nil;
           NSDictionary *responseErrorDictionary = responseUser[@"errors"][0];
           NSInteger code = [responseErrorDictionary[@"code"] integerValue];
           NSString *message = responseErrorDictionary[@"message"];
           responseError = [NSError errorWithDomain:kOmniAuthTwitterErrorDomain code:code userInfo:@{NSLocalizedDescriptionKey : NSNullIfNil(message)}];
-          completionBlock((id<account>)theAccount, nil, responseError, isSuccess);
+          completionBlock((id<account>)theAccount, nil, responseError, NO);
+        } else {
+          NSMutableDictionary * fullResponse = responseUser.mutableCopy;
+          fullResponse[@"oauth_token_secret"] = response[@"oauth_token_secret"];
+          fullResponse[@"oauth_token"]        = response[@"oauth_token"];
+
+          completionBlock((id<account>)theAccount, [self authHashWithResponse:fullResponse.copy], error, YES);
         }
-        else completionBlock((id<account>)theAccount, [self authHashWithResponse:fullResponse.copy], error, isSuccess);
-
       });
-
     }];
-
   }];
-
 
 }
 
